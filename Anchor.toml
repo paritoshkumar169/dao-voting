@@ -1,0 +1,18 @@
+[toolchain]
+
+[features]
+seeds = false
+skip-lint = false
+
+[programs.devnet]
+staking_voting_contract = "8vDcMPAPjXDCy7zgNmN9u3JNTWJAvBzuwt9Lhztub82Y"
+
+[provider]
+cluster = "https://api.devnet.solana.com"
+wallet = "/Users/paritoshkumar/.config/solana/my-new-wallet.json"
+
+[registry]
+url = "https://api.apr.dev"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
