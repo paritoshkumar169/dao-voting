@@ -4,11 +4,11 @@
 seeds = false
 skip-lint = false
 
-[programs.devnet]
+[programs.localnet]
 staking_voting_contract = "8vDcMPAPjXDCy7zgNmN9u3JNTWJAvBzuwt9Lhztub82Y"
 
 [provider]
-cluster = "https://api.devnet.solana.com"
+cluster = "http://127.0.0.1:8899"
 wallet = "/Users/paritoshkumar/.config/solana/my-new-wallet.json"
 
 [registry]
