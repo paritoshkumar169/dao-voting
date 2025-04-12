@@ -1,4 +1,4 @@
-import * as anchor from '@project-serum/anchor';
+import * as anchor from "@coral-xyz/anchor"
 import { assert } from 'chai';
 import { PublicKey, SystemProgram } from '@solana/web3.js';
 import { Buffer } from 'buffer';
@@ -19,6 +19,14 @@ describe('staking_voting_contract', () => {
 
   const createStakeAccount = async (user: anchor.web3.Keypair, amount: number) => {
     const stakeAccount = anchor.web3.Keypair.generate();
+  
+   
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(user.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL),
+      "confirmed"
+    );
+  
+ 
     await program.methods.stakeSol(new anchor.BN(amount))
       .accounts({
         stakeAccount: stakeAccount.publicKey,
@@ -27,9 +35,10 @@ describe('staking_voting_contract', () => {
       })
       .signers([stakeAccount, user])
       .rpc();
+  
     return stakeAccount;
   };
-
+  
   it('Stakes SOL successfully', async () => {
     const user = anchor.web3.Keypair.generate();
     const stakeAccount = await createStakeAccount(user, 1e9);
