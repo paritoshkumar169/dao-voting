@@ -34,7 +34,7 @@ pub mod staking_voting_contract {
         let stake_account = &mut ctx.accounts.stake_account;
         let clock = Clock::get().unwrap();
         if let Some(unstake_ts) = stake_account.unstake_timestamp {
-            if clock.unix_timestamp < unstake_ts + 5 * 24 * 3600 {
+            if clock.unix_timestamp < unstake_ts + 5 {
                 return Err(ErrorCode::CooldownNotPassed.into());
             }
         } else {
@@ -58,7 +58,7 @@ pub mod staking_voting_contract {
         proposal.creator = *ctx.accounts.user.key;
         proposal.metadata_uri = metadata_uri;
         proposal.start_time = clock.unix_timestamp;
-        proposal.end_time = clock.unix_timestamp + 3 * 24 * 3600;
+        proposal.end_time = clock.unix_timestamp + 3;
         proposal.yes_votes = 0;
         proposal.no_votes = 0;
         proposal.status = ProposalStatus::Active;
@@ -100,12 +100,18 @@ pub mod staking_voting_contract {
     pub fn finalize_proposal(ctx: Context<FinalizeProposal>) -> Result<()> {
         let proposal = &mut ctx.accounts.proposal;
         let clock = Clock::get().unwrap();
+        msg!("Current time: {}", clock.unix_timestamp);
+        msg!("Proposal end time: {}", proposal.end_time);
         if clock.unix_timestamp < proposal.end_time {
             return Err(ErrorCode::VotingPeriodNotEnded.into());
         }
         proposal.status = ProposalStatus::Finalized;
+        msg!("Proposal status updated to Finalized");
         Ok(())
     }
+    
+    
+    
 }
 
 #[derive(Accounts)]

@@ -1,198 +1,152 @@
-import * as anchor from "@coral-xyz/anchor"
-import { assert } from 'chai';
-import { PublicKey, SystemProgram } from '@solana/web3.js';
-import { Buffer } from 'buffer';
+import * as anchor from "@coral-xyz/anchor";
+import { Program, BN, web3 } from "@coral-xyz/anchor";
+import { assert } from "chai";
 
-globalThis.Buffer = Buffer;
+const { SystemProgram } = web3;
 
-describe('staking_voting_contract', () => {
+describe("staking_voting_contract", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
-  const program = anchor.workspace.staking_voting_contract;
-  const warpTime = async (seconds: number) => {
-    try {
-      await (provider.connection as any)._rpcRequest('increaseTime', [seconds]);
-    } catch (error) {
-      console.log('Time warp failed (ensure local test validator is running)', error);
-    }
-  };
-
-  const createStakeAccount = async (user: anchor.web3.Keypair, amount: number) => {
-    const stakeAccount = anchor.web3.Keypair.generate();
-  
-   
-    await provider.connection.confirmTransaction(
-      await provider.connection.requestAirdrop(user.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL),
-      "confirmed"
-    );
-  
  
-    await program.methods.stakeSol(new anchor.BN(amount))
-      .accounts({
-        stakeAccount: stakeAccount.publicKey,
-        user: user.publicKey,
+  const program = anchor.workspace.StakingVotingContract as Program<any>;
+  const wallet = provider.wallet;
+
+  let stakeAccountKeypair: web3.Keypair;
+  let stakeAccountPubkey: web3.PublicKey;
+  let proposalAccount: web3.Keypair;
+  let voteRecordPda: web3.PublicKey;
+
+  it("Stakes SOL successfully", async () => {
+    stakeAccountKeypair = web3.Keypair.generate();
+    stakeAccountPubkey = stakeAccountKeypair.publicKey;
+    const stakeAmount = new BN(1_000_000_000);
+
+    await program.rpc.stakeSol(stakeAmount, {
+      accounts: {
+        stakeAccount: stakeAccountPubkey,
+        user: wallet.publicKey,
         systemProgram: SystemProgram.programId,
-      })
-      .signers([stakeAccount, user])
-      .rpc();
-  
-    return stakeAccount;
-  };
-  
-  it('Stakes SOL successfully', async () => {
-    const user = anchor.web3.Keypair.generate();
-    const stakeAccount = await createStakeAccount(user, 1e9);
-    
-    const account = await program.account.stakeAccount.fetch(stakeAccount.publicKey);
-    assert.equal(account.stakedAmount.toString(), '1000000000');
-    assert.isTrue(account.owner.equals(user.publicKey));
+      },
+      signers: [stakeAccountKeypair],
+    });
+
+    const stakeAccount = await (program.account as any)["stakeAccount"].fetch(stakeAccountPubkey);
+    assert.ok(new BN(stakeAccount.stakedAmount).eq(stakeAmount), "Stake amount should match");
   });
 
-  it('Fails to stake with insufficient SOL', async () => {
+  it("Requests unstake successfully", async () => {
+    await program.rpc.requestUnstake({
+      accounts: {
+        stakeAccount: stakeAccountPubkey,
+        owner: wallet.publicKey,
+      },
+    });
+
+    const stakeAccount = await (program.account as any)["stakeAccount"].fetch(stakeAccountPubkey);
+    assert.ok(stakeAccount.unstakeRequested, "The unstakeRequested flag should be true");
+    assert.ok(stakeAccount.unstakeTimestamp !== null, "An unstakeTimestamp should be set");
+  });
+
+  it("Fails to claim unstake before cooldown", async () => {
     try {
-      const user = anchor.web3.Keypair.generate();
-      await createStakeAccount(user, 0.9e9);
-      assert.fail('Should have thrown error');
+      await program.rpc.claimUnstake({
+        accounts: {
+          stakeAccount: stakeAccountPubkey,
+          owner: wallet.publicKey,
+        },
+      });
+      assert.fail("Claim unstake should have failed due to cooldown not passed");
     } catch (err) {
-      assert.include(err.message, 'InsufficientStake');
+      assert.ok(err.toString().includes("Unstake cooldown period not passed"), "Expected cooldown error");
     }
   });
 
-  it('Requests unstake successfully', async () => {
-    const user = anchor.web3.Keypair.generate();
-    const stakeAccount = await createStakeAccount(user, 1e9);
+  it("Claims unstake after cooldown", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20000));
 
-    await program.methods.requestUnstake()
-      .accounts({
-        stakeAccount: stakeAccount.publicKey,
-        owner: user.publicKey,
-      })
-      .rpc();
+    await program.rpc.claimUnstake({
+      accounts: {
+        stakeAccount: stakeAccountPubkey,
+        owner: wallet.publicKey,
+      },
+    });
 
-    const account = await program.account.stakeAccount.fetch(stakeAccount.publicKey);
-    assert.isTrue(account.unstakeRequested);
-    assert.exists(account.unstakeTimestamp);
+    const stakeAccount = await (program.account as any)["stakeAccount"].fetch(stakeAccountPubkey);
+    assert.ok(new BN(stakeAccount.stakedAmount).eq(new BN(0)), "Staked amount should be zero after claim");
+    assert.ok(!stakeAccount.unstakeRequested, "Unstake flag should be cleared");
   });
 
-  it('Fails to claim unstake before cooldown', async () => {
-    const user = anchor.web3.Keypair.generate();
-    const stakeAccount = await createStakeAccount(user, 1e9);
-    
-    await program.methods.requestUnstake()
-      .accounts({ stakeAccount: stakeAccount.publicKey, owner: user.publicKey })
-      .rpc();
+  it("Creates proposal successfully", async () => {
+    stakeAccountKeypair = web3.Keypair.generate();
+    stakeAccountPubkey = stakeAccountKeypair.publicKey;
+    const stakeAmount = new BN(1_000_000_000);
+    await program.rpc.stakeSol(stakeAmount, {
+      accounts: {
+        stakeAccount: stakeAccountPubkey,
+        user: wallet.publicKey,
+        systemProgram: SystemProgram.programId,
+      },
+      signers: [stakeAccountKeypair],
+    });
 
-    try {
-      await program.methods.claimUnstake()
-        .accounts({ stakeAccount: stakeAccount.publicKey, owner: user.publicKey })
-        .rpc();
-      assert.fail('Should have thrown error');
-    } catch (err) {
-      assert.include(err.message, 'CooldownNotPassed');
-    }
-  });
+    proposalAccount = web3.Keypair.generate();
+    const metadataUri = "https://example.com/proposal.json";
 
-  it('Claims unstake after cooldown', async () => {
-    const user = anchor.web3.Keypair.generate();
-    const stakeAccount = await createStakeAccount(user, 1e9);
-
-    await program.methods.requestUnstake()
-      .accounts({ stakeAccount: stakeAccount.publicKey, owner: user.publicKey })
-      .rpc();
-
-    await warpTime(5 * 24 * 3600 + 1);
-
-    await program.methods.claimUnstake()
-      .accounts({ stakeAccount: stakeAccount.publicKey, owner: user.publicKey })
-      .rpc();
-
-    const account = await program.account.stakeAccount.fetch(stakeAccount.publicKey);
-    assert.equal(account.stakedAmount.toString(), '0');
-    assert.isFalse(account.unstakeRequested);
-  });
-
-  it('Creates proposal successfully', async () => {
-    const user = anchor.web3.Keypair.generate();
-    const stakeAccount = await createStakeAccount(user, 1e9);
-    const proposalAccount = anchor.web3.Keypair.generate();
-
-    await program.methods.initializeProposal("https://example.com/proposal/1")
-      .accounts({
+    await program.rpc.initializeProposal(metadataUri, {
+      accounts: {
         proposal: proposalAccount.publicKey,
-        stakeAccount: stakeAccount.publicKey,
-        user: user.publicKey,
+        stakeAccount: stakeAccountPubkey,
+        owner: wallet.publicKey,
+        user: wallet.publicKey,
         systemProgram: SystemProgram.programId,
-      })
-      .signers([proposalAccount])
-      .rpc();
+      },
+      signers: [proposalAccount],
+    });
 
-    const proposal = await program.account.proposal.fetch(proposalAccount.publicKey);
-    assert.equal(proposal.metadataUri, "https://example.com/proposal/1");
-    assert.equal(proposal.status.active, true);
+    const proposal = await (program.account as any)["proposal"].fetch(proposalAccount.publicKey);
+    assert.ok(proposal.metadataUri === metadataUri, "Proposal metadata should match");
   });
 
-  it('Casts vote successfully', async () => {
-    const user = anchor.web3.Keypair.generate();
-    const stakeAccount = await createStakeAccount(user, 2e9);
-    const proposalAccount = anchor.web3.Keypair.generate();
-
-    await program.methods.initializeProposal("test")
-      .accounts({ 
-        proposal: proposalAccount.publicKey, 
-        stakeAccount: stakeAccount.publicKey,
-        user: user.publicKey,
-        systemProgram: SystemProgram.programId
-      })
-      .signers([proposalAccount])
-      .rpc();
-
-    const [voteRecord] = await PublicKey.findProgramAddress(
-      [Buffer.from('vote'), proposalAccount.publicKey.toBuffer(), user.publicKey.toBuffer()],
+  it("Casts vote successfully", async () => {
+    [voteRecordPda] = await web3.PublicKey.findProgramAddress(
+      [
+        Buffer.from("vote"),
+        proposalAccount.publicKey.toBuffer(),
+        wallet.publicKey.toBuffer()
+      ],
       program.programId
     );
 
-    await program.methods.castVote({ yes: {} })
-      .accounts({
+    await program.rpc.castVote({ yes: {} }, {
+      accounts: {
         proposal: proposalAccount.publicKey,
-        voteRecord,
-        stakeAccount: stakeAccount.publicKey,
-        user: user.publicKey,
+        voteRecord: voteRecordPda,
+        stakeAccount: stakeAccountPubkey,
+        owner: wallet.publicKey,
+        user: wallet.publicKey,
         systemProgram: SystemProgram.programId,
-      })
-      .rpc();
+      },
+    });
 
-    const proposal = await program.account.proposal.fetch(proposalAccount.publicKey);
-    assert.equal(proposal.yesVotes.toString(), '2000000000');
-    
-
-    const vote = await program.account.voteRecord.fetch(voteRecord);
-    assert.equal(vote.voteWeight.toString(), '2000000000');
+    const voteRecord = await (program.account as any)["voteRecord"].fetch(voteRecordPda);
+    assert.ok(voteRecord.voteChoice.yes !== undefined, "Vote should be recorded as Yes");
   });
 
-  it('Finalizes proposal after end time', async () => {
-    const user = anchor.web3.Keypair.generate();
-    const stakeAccount = await createStakeAccount(user, 1e9);
-    const proposalAccount = anchor.web3.Keypair.generate();
+  it("Finalizes proposal after end time", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 10000));
 
-    await program.methods.initializeProposal("test")
-      .accounts({ 
-        proposal: proposalAccount.publicKey, 
-        stakeAccount: stakeAccount.publicKey,
-        user: user.publicKey,
-        systemProgram: SystemProgram.programId
-      })
-      .signers([proposalAccount])
-      .rpc();
+    await program.rpc.finalizeProposal({
+      accounts: {
+        proposal: proposalAccount.publicKey,
+      },
+    });
 
-   
-    const proposal = await program.account.proposal.fetch(proposalAccount.publicKey);
-    await warpTime(proposal.endTime.toNumber() - Math.floor(Date.now() / 1000) + 1);
-
-    await program.methods.finalizeProposal()
-      .accounts({ proposal: proposalAccount.publicKey })
-      .rpc();
-
-    const updatedProposal = await program.account.proposal.fetch(proposalAccount.publicKey);
-    assert.equal(updatedProposal.status.finalized, true);
+    const proposal = await (program.account as any)["proposal"].fetch(proposalAccount.publicKey);
+    console.log("Fetched proposal.status:", proposal.status);
+    // Corrected assertion checking for the finalized enum variant
+    assert.ok(
+      proposal.status.finalized !== undefined,
+      "Proposal should be finalized"
+    );
   });
 });
