@@ -143,7 +143,7 @@ describe("staking_voting_contract", () => {
 
     const proposal = await (program.account as any)["proposal"].fetch(proposalAccount.publicKey);
     console.log("Fetched proposal.status:", proposal.status);
-    // Corrected assertion checking for the finalized enum variant
+  
     assert.ok(
       proposal.status.finalized !== undefined,
       "Proposal should be finalized"
